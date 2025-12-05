@@ -52,7 +52,7 @@ The server will be running at `http://localhost:3500`
    - **API Key**: `sk-unused` (any value works)
    - **TTS Voice**: `alloy` or any Gemini voice name (e.g., `Kore`, `Charon`)
 
-![OpenWebUI Settings](https://via.placeholder.com/600x300?text=OpenWebUI+TTS+Settings)
+
 
 ## 📡 API Usage
 
