@@ -84,14 +84,14 @@ async function generateSpeech(text, voiceName, apiKey) {
 
 /**
  * Generate speech using Gemini TTS API with streaming (SSE)
- * 
- * @param {string} text - Text to convert to speech
+ * * @param {string} text - Text to convert to speech
  * @param {string} voiceName - Gemini voice name
  * @param {string} apiKey - Gemini API key
  * @param {function} onChunk - Callback for each PCM chunk (Buffer)
+ * @param {AbortSignal} [signal] - Optional abort signal to cancel the request
  * @returns {Promise<void>}
  */
-async function generateSpeechStream(text, voiceName, apiKey, onChunk) {
+async function generateSpeechStream(text, voiceName, apiKey, onChunk, signal) {
     if (!apiKey) {
         throw new Error('GEMINI_API_KEY is not configured');
     }
@@ -122,12 +122,14 @@ async function generateSpeechStream(text, voiceName, apiKey, onChunk) {
 
     const startTime = Date.now();
 
+    // UPDATE 1: Pass 'signal' to fetch for cancellation support
     const response = await fetch(`${GEMINI_TTS_STREAM_URL}?alt=sse&key=${apiKey}`, {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
         },
-        body: JSON.stringify(requestBody)
+        body: JSON.stringify(requestBody),
+        signal 
     });
 
     if (!response.ok) {
@@ -141,11 +143,37 @@ async function generateSpeechStream(text, voiceName, apiKey, onChunk) {
     let buffer = '';
     let totalBytes = 0;
 
+    // Helper to process a single SSE line (Used for both main loop and final flush)
+    const processLine = async (line) => {
+        if (line.startsWith('data: ')) {
+            const jsonStr = line.slice(6).trim();
+
+            if (jsonStr === '[DONE]') {
+                return;
+            }
+
+            try {
+                const data = JSON.parse(jsonStr);
+                const audioData = data?.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+
+                if (audioData) {
+                    const pcmChunk = Buffer.from(audioData, 'base64');
+                    totalBytes += pcmChunk.length;
+                    await onChunk(pcmChunk);
+                }
+            } catch (parseError) {
+                logger.debug('Failed to parse SSE data', jsonStr.substring(0, 100));
+            }
+        }
+    };
+
     try {
         while (true) {
             const { done, value } = await reader.read();
 
             if (done) {
+                // UPDATE 2 Part A: Flush any remaining characters from decoder
+                buffer += decoder.decode();
                 break;
             }
 
@@ -156,31 +184,20 @@ async function generateSpeechStream(text, voiceName, apiKey, onChunk) {
             buffer = lines.pop() || ''; // Keep incomplete line in buffer
 
             for (const line of lines) {
-                if (line.startsWith('data: ')) {
-                    const jsonStr = line.slice(6).trim();
-
-                    if (jsonStr === '[DONE]') {
-                        continue;
-                    }
-
-                    try {
-                        const data = JSON.parse(jsonStr);
-                        const audioData = data?.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
-
-                        if (audioData) {
-                            const pcmChunk = Buffer.from(audioData, 'base64');
-                            totalBytes += pcmChunk.length;
-                            await onChunk(pcmChunk);
-                        }
-                    } catch (parseError) {
-                        logger.debug('Failed to parse SSE data', jsonStr.substring(0, 100));
-                    }
-                }
+                await processLine(line);
             }
         }
+
+        // UPDATE 2 Part B: Process any remaining data in buffer after stream ends
+        // This fixes the "stops after first sentence" issue
+        if (buffer.trim()) {
+            await processLine(buffer.trim());
+        }
+
     } finally {
         reader.releaseLock();
     }
+    
 
     const elapsed = Date.now() - startTime;
     logger.info(`Streamed ${totalBytes} bytes of PCM audio in ${elapsed}ms for "${text.substring(0, 50)}..." using voice ${voiceName}`);
