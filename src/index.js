@@ -86,10 +86,12 @@ app.post('/v1/audio/speech', async (req, res) => {
             const signal = controller.signal;
 
             // 2. Listen for response close (Client stopped listening)
-            // CHANGED: req.on('close') -> res.on('close') to avoid premature aborts
             res.on('close', () => {
-                logger.info('Client disconnected, aborting TTS generation');
-                controller.abort();
+                // FIXED: Only abort if the response wasn't finished successfully
+                if (!res.writableEnded) {
+                    logger.info('Client disconnected prematurely, aborting TTS generation');
+                    controller.abort();
+                }
             });
 
             let bytesSent = 0;
