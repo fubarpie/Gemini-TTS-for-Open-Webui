@@ -76,10 +76,22 @@ app.post('/v1/audio/speech', async (req, res) => {
 
         const contentType = getContentType(response_format);
 
-        if (stream) {
+if (stream) {
             // Streaming response
             res.set('Content-Type', contentType);
             res.set('Transfer-Encoding', 'chunked');
+
+            // --- [INSERT START] ---
+            // 1. Create the AbortController
+            const controller = new AbortController();
+            const signal = controller.signal;
+
+            // 2. Listen for client disconnect to trigger abort
+            req.on('close', () => {
+                logger.info('Client disconnected, aborting TTS generation');
+                controller.abort();
+            });
+            // --- [INSERT END] ---
 
             let bytesSent = 0;
 
@@ -110,14 +122,26 @@ app.post('/v1/audio/speech', async (req, res) => {
                 }
             );
 
-            // Stream from Gemini
-            await generateSpeechStream(input, geminiVoice, GEMINI_API_KEY, async (pcmChunk) => {
-                converter.write(pcmChunk);
-            });
+            // --- [REPLACE THIS BLOCK] ---
+            // 3. Stream from Gemini with signal and abort check
+            try {
+                await generateSpeechStream(input, geminiVoice, GEMINI_API_KEY, async (pcmChunk) => {
+                    if (signal.aborted) return; // Stop writing if aborted
+                    converter.write(pcmChunk);
+                }, signal); // <--- Pass the signal here
 
-            converter.end();
+                converter.end();
+            } catch (err) {
+                if (err.name === 'AbortError' || signal.aborted) {
+                    logger.info('Stream aborted successfully');
+                    converter.end();
+                    return;
+                }
+                throw err;
+            }
+            // --- [REPLACEMENT END] ---
 
-        } else {
+        } else {} else {
             // Non-streaming response (original behavior)
             const pcmBuffer = await generateSpeech(input, geminiVoice, GEMINI_API_KEY);
             const audioBuffer = await convertAudio(pcmBuffer, response_format);
@@ -178,3 +202,4 @@ app.listen(PORT, HOST, () => {
         logger.info('Gemini API key configured');
     }
 });
+
