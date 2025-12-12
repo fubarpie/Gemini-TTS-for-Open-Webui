@@ -25,13 +25,18 @@ async function convertAudio(pcmBuffer, format = 'mp3') {
 
         // ffmpeg arguments for converting from PCM
         const args = [
+            // Input Options (must come before -i)
             '-f', 's16le',        // Input format: signed 16-bit little-endian
             '-ar', '24000',       // Input sample rate: 24000 Hz
             '-ac', '1',           // Input channels: mono
+            '-fflags', 'nobuffer', // Reduce input buffering
+            '-analyzeduration', '0', // Skip analyzing audio
+            '-probesize', '32',      // Skip probing
             '-i', 'pipe:0',       // Read from stdin
-            // Low latency flags
-            '-fflags', 'nobuffer',
-            '-flags', 'low_delay',
+            
+            // Output Options
+            '-flags', 'low_delay', // Optimize for low latency
+            '-flush_packets', '1', // Output packets immediately
             '-f', outputFormat,   // Output format
         ];
 
@@ -104,13 +109,18 @@ function createStreamConverter(format, onData, onEnd, onError) {
     const outputFormat = format === 'mp3' ? 'mp3' : format;
 
     const args = [
+        // Input Options (Optimized for Latency)
         '-f', 's16le',
         '-ar', '24000',
         '-ac', '1',
+        '-fflags', 'nobuffer',
+        '-analyzeduration', '0',
+        '-probesize', '32',
         '-i', 'pipe:0',
-        // LOW LATENCY OPTIMIZATIONS
-        '-fflags', 'nobuffer',    // Do not buffer headers
-        '-flags', 'low_delay',    // Optimize for low delay
+        
+        // Output Options
+        '-flags', 'low_delay',
+        '-flush_packets', '1',
         '-f', outputFormat,
     ];
 
